@@ -85,7 +85,43 @@ def hours_text_is_malformed(text):
     return not (has_time_pattern or is_common_phrase)
 
 
-def reasons_for(record):
+def explain_ai_anomaly(full_df, record):
+    """The Isolation Forest itself gives no human-readable reason — it's an unsupervised
+    model, not a rule. This gives the AI flag some real explainability instead of just
+    'trust the model': it compares this record's key numbers against the rest of the
+    dataset and reports whichever one stands out most, in plain terms."""
+    building_len = len(str(record.get("BUILDING_NAME", "") or ""))
+    desc_len = len(str(record.get("AED_LOCATION_DESCRIPTION", "") or ""))
+
+    all_building_len = full_df["BUILDING_NAME"].fillna("").str.len()
+    all_desc_len = full_df["AED_LOCATION_DESCRIPTION"].fillna("").str.len()
+
+    checks = []
+    if all_building_len.std() > 0:
+        z = (building_len - all_building_len.mean()) / all_building_len.std()
+        checks.append(("building name text length", z, building_len))
+    if all_desc_len.std() > 0:
+        z = (desc_len - all_desc_len.mean()) / all_desc_len.std()
+        checks.append(("location description text length", z, desc_len))
+    if pd.isna(record.get("BUILDING_NAME")):
+        checks.append(("missing building name entirely", 3.0, None))
+    if pd.isna(record.get("ROAD_NAME")):
+        checks.append(("missing road name entirely", 3.0, None))
+    if pd.isna(record.get("OPERATING_HOURS")):
+        checks.append(("missing operating hours entirely", 3.0, None))
+
+    if not checks:
+        return None
+    label, z, value = max(checks, key=lambda c: abs(c[1]))
+    if abs(z) < 1.0:
+        return None
+    direction = "unusually long" if z > 0 else "unusually short"
+    if value is not None:
+        return f"{label.capitalize()} is {direction} compared to other registry entries ({value} characters)"
+    return f"{label.capitalize()} — this stands out compared to other registry entries"
+
+
+def reasons_for(record, full_df=None):
     reasons = []
     if record.get("flag_missing_address"):
         reasons.append("Missing road name or postal code")
@@ -98,7 +134,11 @@ def reasons_for(record):
     if record.get("flag_malformed_hours") or hours_text_is_malformed(record.get("OPERATING_HOURS")):
         reasons.append("Operating hours text doesn't look like a valid time range")
     if record.get("review_confidence_score", 0) == 0 and record.get("ai_anomaly_score", 0) > 0:
-        reasons.append("Flagged by the AI model as statistically unusual — no specific rule triggered")
+        ai_explanation = explain_ai_anomaly(full_df, record) if full_df is not None else None
+        if ai_explanation:
+            reasons.append(f"AI flagged this as statistically unusual — {ai_explanation}")
+        else:
+            reasons.append("Flagged by the AI model as statistically unusual — no single feature stood out clearly, but the overall combination is unusual")
     return reasons if reasons else ["No specific flag triggered — check manually."]
 
 
@@ -118,7 +158,7 @@ def render_record_inspector(full_df, record_id, key_prefix):
 
     with col2:
         st.write("**Why flagged:**")
-        for r in reasons_for(record):
+        for r in reasons_for(record, full_df):
             st.write(f"- {r}")
 
         partner_aed_id = record.get("fuzzy_duplicate_partner_aed_id")
@@ -277,7 +317,7 @@ with tab_confirmed:
         with st.expander("View full details for each confirmed record"):
             for _, record in confirmed.iterrows():
                 st.markdown(f"**{record.get('AED_ID', '')}** — {record.get('BUILDING_NAME', '')}, {record.get('ROAD_NAME', '')}")
-                for r in reasons_for(record):
+                for r in reasons_for(record, df):
                     st.write(f"  - {r}")
     else:
         st.info("No records confirmed yet — review some in the Pending tab.")
@@ -291,7 +331,7 @@ with tab_false:
         with st.expander("View full details for each false-positive record"):
             for _, record in false_pos.iterrows():
                 st.markdown(f"**{record.get('AED_ID', '')}** — {record.get('BUILDING_NAME', '')}, {record.get('ROAD_NAME', '')}")
-                for r in reasons_for(record):
+                for r in reasons_for(record, df):
                     st.write(f"  - {r}")
     else:
         st.info("No false positives marked yet.")
