@@ -90,6 +90,12 @@ percentiles below are reported as supporting metrics.
 | Total flagged | 149 (1.5%) | 2,453 (25.4%) | 2,580 (26.8%) |
 | New catches vs. previous layer | — | 2,304 | 127 |
 
+*Note: these are raw detection counts. The dashboard's actual review queue is smaller,
+since a matched duplicate pair is collapsed into a single queue entry — resolving one side
+of the pair automatically resolves the other, so a reviewer only needs to make one decision
+per pair rather than two. Detection accuracy is unaffected; only the reviewer's workload is
+reduced.*
+
 **Seeded ground-truth evaluation** (since the raw dataset has no confirmed-duplicate
 labels, 25 synthetic duplicate records were injected with realistic variations —
 abbreviations, typos, extra words — alongside 25 known-clean records, and the detector
@@ -113,10 +119,11 @@ positives, which is appropriate for a human-reviewed queue where a false positiv
 reviewer a few seconds, but a missed real issue costs nothing (it's never looked at again).
 
 **Performance / usability metric (reviewer time per validated issue):** Measured from
-25 real reviewer actions in the dashboard — median 3.2 sec, p90 16.9 sec, p95 23.7 sec, mean
-6.6 sec. Most records are reviewed quickly; the gap between median and p95 reflects the
-occasional record needing closer inspection (e.g. checking the matched-duplicate comparison
-table), which is expected and acceptable for a human-in-the-loop tool.
+21 real reviewer actions on the final version of the dashboard — median 12.2 sec, p90 29.9
+sec, p95 82.3 sec. The mean (61.4 sec) is noticeably higher than the median because one
+natural pause was taken partway through the session, as would happen in any real review
+workflow; median and percentiles are reported as the primary figures for exactly this
+reason, per the brief's own guidance that averages alone are insufficient.
 
 **Note on iteration:** an earlier version of the fuzzy-matching logic allowed a strongly
 similar location-description string to override an explicit floor-level mismatch (e.g.
@@ -147,6 +154,9 @@ reliable, human-verified pipeline.
 - **Source:** SCDF Public Access AEDs, data.gov.sg, GeoJSON format
 - **Dataset date:** February 2020 (per the source page's stated data date)
 - **Licence:** Singapore Open Data Licence v1.0
+- **File checksum (SHA256):** `e2ef793ffd0fd2dbe99ffdcfb21b38154c81fd0685d1f0fcc5b75a6d57205c02` —
+  run `certutil -hashfile aed_locations.geojson SHA256` (Windows) to verify against the
+  copy in this repo
 - **Retrieved:** August 2026, for SGTDP 2026 submission
 - **Fields used:** See Method Card above
 - **No supplemental or synthetic data used for the core detection pipeline** — synthetic

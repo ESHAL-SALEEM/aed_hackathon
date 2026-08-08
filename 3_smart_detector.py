@@ -108,7 +108,14 @@ def find_fuzzy_duplicates(df, similarity_threshold=90):
 
 def compute_confidence_score(df):
     """Combines all flags into one 0-1 'needs review' score.
-    Weighted so structural problems (bad coords) matter more than soft ones (odd hours text)."""
+    Weighted so structural problems (bad coords) matter more than soft ones (odd hours text).
+
+    AGREEMENT BOOST: when the exact-match coordinate/description rule AND the independent
+    fuzzy text-matching method both flag the same record as a duplicate, that's much
+    stronger evidence than either signal alone — two different detection methods reaching
+    the same conclusion independently. Rather than just summing their individual weights
+    (which understates how confident this really is), such records get boosted to 0.9,
+    reflecting near-certainty that this is a genuine duplicate needing review."""
     weights = {
         "flag_invalid_coords": 0.35,
         "flag_missing_address": 0.25,
@@ -121,6 +128,11 @@ def compute_confidence_score(df):
     for col, w in weights.items():
         if col in df.columns:
             score += df[col].astype(bool).astype(float) * w
+
+    if "flag_duplicate_coords" in df.columns and "flag_fuzzy_duplicate" in df.columns:
+        both_methods_agree = df["flag_duplicate_coords"].astype(bool) & df["flag_fuzzy_duplicate"].astype(bool)
+        score = score.where(~both_methods_agree, 0.9)
+
     df["review_confidence_score"] = score.clip(upper=1.0)
     return df
 

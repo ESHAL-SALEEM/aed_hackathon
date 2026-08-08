@@ -52,9 +52,12 @@ def load_data(path):
 
 
 def load_decisions(path):
-    if not os.path.exists(path):
+    if not os.path.exists(path) or os.path.getsize(path) == 0:
         return {}
-    log = pd.read_csv(path)
+    try:
+        log = pd.read_csv(path)
+    except pd.errors.EmptyDataError:
+        return {}
     if log.empty:
         return {}
     log = log.sort_values("reviewed_at").drop_duplicates(subset="AED_ID", keep="last")
@@ -68,9 +71,12 @@ def save_decision(aed_id, score, decision):
         "reviewer_decision": decision,
         "reviewed_at": pd.Timestamp.now().isoformat(),
     }])
-    if os.path.exists(LOG_PATH):
-        existing = pd.read_csv(LOG_PATH)
-        log_entry = pd.concat([existing, log_entry], ignore_index=True)
+    if os.path.exists(LOG_PATH) and os.path.getsize(LOG_PATH) > 0:
+        try:
+            existing = pd.read_csv(LOG_PATH)
+            log_entry = pd.concat([existing, log_entry], ignore_index=True)
+        except pd.errors.EmptyDataError:
+            pass
     log_entry.to_csv(LOG_PATH, index=False)
 
 
@@ -184,9 +190,23 @@ def render_record_inspector(full_df, record_id, key_prefix):
             decision = "confirmed_real_issue" if confirm_clicked else "false_positive"
             save_decision(record.get("AED_ID", ""), record.get("final_review_score", ""), decision)
             aed_label = record.get("AED_ID", "")
+
+            # If this record has a matched duplicate partner, apply the same decision to
+            # it too — reviewing one side of a matched pair already answers the question
+            # for both; making the reviewer click twice on the same comparison is wasted
+            # effort, exactly what this tool exists to avoid. Only auto-applies if the
+            # partner hasn't already been given a different manual decision.
+            partner_note = ""
+            partner_aed_id = record.get("fuzzy_duplicate_partner_aed_id")
+            if pd.notna(partner_aed_id) and partner_aed_id in full_df["AED_ID"].values:
+                partner_row = full_df[full_df["AED_ID"] == partner_aed_id].iloc[0]
+                if partner_row.get("_decision", "pending") == "pending":
+                    save_decision(partner_aed_id, partner_row.get("final_review_score", ""), decision)
+                    partner_note = f" Its matched duplicate (AED {partner_aed_id}) was marked the same, since one review covers both."
+
             st.session_state["flash_message"] = (
-                f"AED {aed_label} confirmed as a real issue." if decision == "confirmed_real_issue"
-                else f"AED {aed_label} marked as a false positive."
+                f"AED {aed_label} confirmed as a real issue.{partner_note}" if decision == "confirmed_real_issue"
+                else f"AED {aed_label} marked as a false positive.{partner_note}"
             )
             st.session_state.pop("open_record", None)
             st.rerun()
@@ -197,6 +217,18 @@ decisions = load_decisions(LOG_PATH)
 
 df = df[df["final_review_score"] > 0].copy()
 df["_decision"] = df["AED_ID"].map(decisions).fillna("pending")
+
+# Collapse matched duplicate pairs down to ONE queue entry each. Reviewing either side of
+# a pair already auto-resolves both (see the confirm/reject logic below) — showing both
+# separately in the count and lists overstates how much review work is actually needed.
+# Non-paired records (flagged only by rules, AI, or a solo criterion) are untouched.
+if "fuzzy_duplicate_partner_aed_id" in df.columns:
+    has_partner = df["fuzzy_duplicate_partner_aed_id"].notna()
+    # Keep exactly one side of each pair — whichever AED_ID sorts first, so it's deterministic.
+    keep_mask = ~has_partner | (df["AED_ID"] < df["fuzzy_duplicate_partner_aed_id"])
+    queue_df = df[keep_mask].copy()
+else:
+    queue_df = df.copy()
 
 if "flash_message" in st.session_state:
     st.toast(st.session_state["flash_message"], icon="✅")
@@ -223,21 +255,22 @@ st.subheader("Detection layers compared")
 baseline_count = int(df["any_flag"].sum()) if "any_flag" in df.columns else None
 rules_count = int((df["review_confidence_score"] > 0).sum())
 ai_only_count = int(((df["review_confidence_score"] == 0) & (df["final_review_score"] > 0)).sum())
-total_count = int((df["final_review_score"] > 0).sum())
+total_count = len(queue_df)  # actual queue size after collapsing matched pairs to one entry each
 
 c1, c2, c3, c4 = st.columns(4)
 if baseline_count is not None:
     c1.metric("Baseline (simple rules)", f"{baseline_count:,}")
 c2.metric("Rules + fuzzy matching", f"{rules_count:,}")
 c3.metric("AI-only catches", f"{ai_only_count:,}", "missed by every rule")
-c4.metric("Total in review queue", f"{total_count:,}", f"{total_count/len(df):.1%} of records")
+c4.metric("Total in review queue", f"{total_count:,}", f"{total_count/len(df):.1%} of records flagged")
+st.caption("Duplicate pairs count once here, since resolving one side resolves both.")
 
 st.divider()
 
 # ---- Top priority records — click Review to inspect right here, no jumping around ----
 st.subheader("🔥 Top priority records")
 st.caption("Click \"Review →\" to open that record's full detail below.")
-top5 = df[df["_decision"] == "pending"].sort_values("final_review_score", ascending=False).head(5)
+top5 = queue_df[queue_df["_decision"] == "pending"].sort_values("final_review_score", ascending=False).head(5)
 for _, row in top5.iterrows():
     tc1, tc2, tc3, tc4, tc5 = st.columns([1.2, 3, 2, 1, 1])
     tc1.write(row.get("AED_ID", ""))
@@ -276,14 +309,14 @@ display_cols = [c for c in [
 ] if c in df.columns]
 
 tab_pending, tab_confirmed, tab_false = st.tabs([
-    f"🕓 Pending Review ({(df['_decision'] == 'pending').sum()})",
-    f"✅ Confirmed Real Issues ({(df['_decision'] == 'confirmed_real_issue').sum()})",
-    f"❌ False Positives ({(df['_decision'] == 'false_positive').sum()})",
+    f"🕓 Pending Review ({(queue_df['_decision'] == 'pending').sum()})",
+    f"✅ Confirmed Real Issues ({(queue_df['_decision'] == 'confirmed_real_issue').sum()})",
+    f"❌ False Positives ({(queue_df['_decision'] == 'false_positive').sum()})",
 ])
 
 # ================= PENDING TAB =================
 with tab_pending:
-    pending = df[df["_decision"] == "pending"]
+    pending = queue_df[queue_df["_decision"] == "pending"]
     pending = pending[pending["final_review_score"] >= min_score]
     if flag_types:
         pending = pending[pending[flag_types].any(axis=1)]
@@ -310,7 +343,7 @@ with tab_pending:
 
 # ================= CONFIRMED TAB =================
 with tab_confirmed:
-    confirmed = df[df["_decision"] == "confirmed_real_issue"].sort_values("final_review_score", ascending=False)
+    confirmed = queue_df[queue_df["_decision"] == "confirmed_real_issue"].sort_values("final_review_score", ascending=False)
     st.subheader(f"{len(confirmed)} records confirmed as real issues by a reviewer")
     if len(confirmed) > 0:
         st.dataframe(confirmed[display_cols], width="stretch")
@@ -324,7 +357,7 @@ with tab_confirmed:
 
 # ================= FALSE POSITIVE TAB =================
 with tab_false:
-    false_pos = df[df["_decision"] == "false_positive"].sort_values("final_review_score", ascending=False)
+    false_pos = queue_df[queue_df["_decision"] == "false_positive"].sort_values("final_review_score", ascending=False)
     st.subheader(f"{len(false_pos)} records marked as false positives by a reviewer")
     if len(false_pos) > 0:
         st.dataframe(false_pos[display_cols], width="stretch")
