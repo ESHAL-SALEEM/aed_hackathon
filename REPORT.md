@@ -85,6 +85,12 @@ false positive a reviewer spends a few seconds dismissing — so recall is weigh
 single most important number for this tool's core job. Precision, F1, and reviewer-time
 percentiles below are reported as supporting metrics.
 
+Per the brief's requirement to report at least one effectiveness, one safety/error, and one
+performance/usability metric: **effectiveness** is recall (100%) and precision (90.9%);
+**safety/error** is the false-positive rate on the seeded test (5 of 25 known-clean records
+wrongly flagged, 20%); **performance/usability** is reviewer time per validated issue,
+reported with percentiles below rather than as an average alone.
+
 | Metric | Baseline (rules) | + Fuzzy matching | + AI anomaly layer |
 |---|---|---|---|
 | Total flagged | 149 (1.5%) | 2,453 (25.4%) | 2,580 (26.8%) |
@@ -165,12 +171,33 @@ reliable, human-verified pipeline.
 
 ## 5. Safety & Privacy Statement
 
-- [x] Every user-facing screen displays the mandatory safety notice
-- [x] Uses only the supplied historical registry snapshot — no live incident, dispatch,
-      or myResponder data
-- [x] Does not claim to detect battery state, pad expiry, or device readiness
-- [x] Does not label any AED as currently available or working
-- [x] Distinguishes data-quality flags (including AI-flagged statistical outliers) from
-      confirmed real-world faults throughout
-- [x] Collects no personal data, names, or contact details
-- [x] No credentials or API keys are present in this repository
+Checked against the brief's mandatory safety gate, point by point:
+
+1. [x] **Scripted/historical/synthetic scenarios only** — every record reviewed is a real
+   historical entry from the Feb 2020 snapshot; the seeded evaluation set is explicitly
+   synthetic and labeled as such throughout
+2. [x] **No live incident reporting, dispatch, alerts, or integration** with SCDF, 995,
+   myResponder, or the national AED registry — this tool only reads a static, frozen file
+3. [x] **No diagnosis, medical advice, CPR coaching, or instructions** that could conflict
+   with official emergency guidance — this tool only flags registry data-entry issues
+4. [x] **Never labels an AED as currently available, accessible, inspected, or working**
+   based on the snapshot — every screen distinguishes a data-quality flag from a confirmed
+   real-world fault
+5. [x] **Dataset date, assumptions, uncertainty, and known failure modes identified at
+   point of use** — the dashboard shows the Feb 2020 date and AI-layer explanation on every
+   screen; failure modes are documented in Section 3 above
+6. [x] **Safe failure state when data is insufficient** — a missing or ambiguous field
+   (address, coordinates, hours) is itself treated as a flag for human review rather than
+   guessed at or silently ignored
+7. [N/A] **Synthetic start points in public demos** — not applicable; this lane has no
+   routing or "start point" concept (that applies to Lane 1, Discovery & Routing)
+8. [x] **Collects no names, contact details, health information, or responder identities**
+9. [N/A] **Informed consent for device-location use** — not applicable; the tool doesn't
+   collect any location data from its users, only reads the pre-supplied public registry
+10. [x] **No credentials or API keys** anywhere in the prototype, logs, repository, or
+    presentation materials
+
+The mandatory notice — *"Prototype for planning and simulation only — not for emergency
+use. In an emergency in Singapore, call 995 immediately and follow SCDF instructions. Use
+official SCDF/myResponder channels. Do not delay emergency action to use this prototype"*
+— is displayed on every screen of the dashboard, matching the brief's required wording.
